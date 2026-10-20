@@ -309,10 +309,10 @@ if (esIOS && !enModoApp) document.getElementById('girar-ios').hidden = false;
 btnCompleta.addEventListener('click', pantallaCompleta);
 
 function finPartida() {
-  cargarRanking();
   document.body.classList.remove('jugando');
   s.modo = 'fin'; s.stuck = true; s.caps = null;
-  if (entraEnRanking(s.score)) guardar();
+  // Si entra en el ranking, el servidor devuelve la tabla ya con tu marca; si no, se refresca sin más
+  if (entraEnRanking(s.score)) guardar(); else cargarRanking();
   form.hidden = false;
 }
 async function guardar() {
@@ -364,6 +364,7 @@ function cartel(t, y, size = 16) {        // texto con banda negra detrás para 
 const COPA = ['XXXXXXXXXXXX','X.XXXXXXXX.X','X.XXXXXXXX.X','X.XXXXXXXX.X','.XXXXXXXXXX.','..XXXXXXXX..',
   '...XXXXXX...','....XXXX....','.....XX.....','.....XX.....','...XXXXXX...','..XXXXXXXX..'];
 const MINICOPA = ['XXXXXXX','X.XXX.X','.XXXXX.','..XXX..','...X...','..XXX..'];
+const MEDALLAS = ['#ffd700', '#c0c0c0', '#cd7f32'];   // oro, plata y bronce para los tres primeros
 function pintarPixeles(mapa, x, y, t = 1) {
   mapa.forEach((fila, r) => [...fila].forEach((ch, c) => { if (ch === 'X') g.fillRect(x + c * t, y + r * t, t, t); }));
   // brillo: una línea negra en el cuerpo de la copa grande
@@ -379,11 +380,13 @@ function tablaRecords(y0) {
   g.fillStyle = '#fff';
   const parpadeo = Math.floor(performance.now() / 300) % 2 === 0;
   r.forEach((e, i) => {
+    g.fillStyle = MEDALLAS[i] || '#fff';
     if (e.id === s.nuevoId) pintarPixeles(MINICOPA, 26, y0 + 31 + i * 13);
     if (e.id === s.nuevoId && !parpadeo) return;
     const linea = String(i + 1).padStart(2, ' ') + '. ' + e.nombre.padEnd(10, ' ') + ' ' + String(e.score).padStart(6, ' ') + '  ' + fechaCorta(e.fecha);
     txt(linea, W / 2, y0 + 30 + i * 13);
   });
+  g.fillStyle = '#fff';
 }
 
 function pieInicio() {
@@ -410,9 +413,12 @@ function dibujar() {
     return;
   }
   if (s.modo === 'fin') {
-    if (s.nuevoId) {
-      txt('NUEVO RECORD', W / 2, 10, 16);
-      pintarPixeles(COPA, 34, 4, 2); pintarPixeles(COPA, W - 34 - 24, 4, 2);
+    // Solo es récord si quedas primero; segundo y tercero llevan copas de plata y bronce
+    const puesto = s.nuevoId ? ranking().findIndex(e => e.id === s.nuevoId) : -1;
+    if (puesto >= 0) {
+      txt(['NUEVO RECORD', 'SEGUNDO PUESTO', 'TERCER PUESTO'][puesto] || 'PUESTO ' + (puesto + 1), W / 2, 10, 16);
+      if (puesto < 3) for (const x of [8, W - 32]) { g.fillStyle = MEDALLAS[puesto]; pintarPixeles(COPA, x, 4, 2); }
+      g.fillStyle = '#fff';
     } else txt('FIN DE LA PARTIDA', W / 2, 10, 16);
     txt('PUNTOS ' + s.score + '  -  NIVEL ' + (s.n + 1), W / 2, 34);
     tablaRecords(52);
