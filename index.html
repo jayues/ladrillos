@@ -360,6 +360,15 @@ function cartel(t, y, size = 16) {        // texto con banda negra detrás para 
   g.fillStyle = '#000'; g.fillRect(Math.round(W / 2 - w / 2), y - 4, Math.round(w), size + 8);
   g.fillStyle = '#fff'; txt(t, W / 2, y, size);
 }
+// Copas en píxeles (X = blanco)
+const COPA = ['XXXXXXXXXXXX','X.XXXXXXXX.X','X.XXXXXXXX.X','X.XXXXXXXX.X','.XXXXXXXXXX.','..XXXXXXXX..',
+  '...XXXXXX...','....XXXX....','.....XX.....','.....XX.....','...XXXXXX...','..XXXXXXXX..'];
+const MINICOPA = ['XXXXXXX','X.XXX.X','.XXXXX.','..XXX..','...X...','..XXX..'];
+function pintarPixeles(mapa, x, y, t = 1) {
+  mapa.forEach((fila, r) => [...fila].forEach((ch, c) => { if (ch === 'X') g.fillRect(x + c * t, y + r * t, t, t); }));
+  // brillo: una línea negra en el cuerpo de la copa grande
+  if (mapa === COPA) { g.fillStyle = '#000'; g.fillRect(x + 3 * t, y + t, t, 3 * t); g.fillStyle = '#fff'; }
+}
 function tablaRecords(y0) {
   txt('MEJORES PUNTUACIONES', W / 2, y0);
   const r = ranking();
@@ -370,6 +379,7 @@ function tablaRecords(y0) {
   g.fillStyle = '#fff';
   const parpadeo = Math.floor(performance.now() / 300) % 2 === 0;
   r.forEach((e, i) => {
+    if (e.id === s.nuevoId) pintarPixeles(MINICOPA, 26, y0 + 31 + i * 13);
     if (e.id === s.nuevoId && !parpadeo) return;
     const linea = String(i + 1).padStart(2, ' ') + '. ' + e.nombre.padEnd(10, ' ') + ' ' + String(e.score).padStart(6, ' ') + '  ' + fechaCorta(e.fecha);
     txt(linea, W / 2, y0 + 30 + i * 13);
@@ -400,8 +410,11 @@ function dibujar() {
     return;
   }
   if (s.modo === 'fin') {
-    txt('FIN DE LA PARTIDA', W / 2, 10, 16);
-    txt(s.nuevoId ? 'NUEVO RECORD: ' + s.score + ' PUNTOS' : 'PUNTOS ' + s.score + '  -  NIVEL ' + (s.n + 1), W / 2, 32);
+    if (s.nuevoId) {
+      txt('NUEVO RECORD', W / 2, 10, 16);
+      pintarPixeles(COPA, 34, 4, 2); pintarPixeles(COPA, W - 34 - 24, 4, 2);
+    } else txt('FIN DE LA PARTIDA', W / 2, 10, 16);
+    txt('PUNTOS ' + s.score + '  -  NIVEL ' + (s.n + 1), W / 2, 34);
     tablaRecords(52);
     pieInicio();
     return;
