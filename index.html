@@ -5,6 +5,14 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Ladrillos</title>
 <meta name="description" content="Juego de romper ladrillos en blanco y negro, con ranking.">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/iconos/icono-192.png">
+<link rel="apple-touch-icon" href="/iconos/icono-180.png">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Ladrillos">
 <style>
 @font-face { font-family: "Press Start 2P"; src: url("fuentes/PressStart2P.woff") format("woff"); font-display: swap; }
 /* Pantalla única de PC antiguo: todo negro, todo blanco, letra de 8 bits */
@@ -47,11 +55,17 @@ body {
   padding: 9px 12px; cursor: pointer; border-radius: 0;
 }
 #jugador button.sec { background: var(--bg); color: var(--fg); }
+#girar { display: none; margin: 0; font-size: 11px; line-height: 2; text-align: center; color: var(--fg); }
+#girar .icono { display: inline-block; font-size: 22px; vertical-align: middle; margin-right: 8px; }
+#girar small { display: block; color: var(--dim); font-size: 9px; }
+@media (orientation: portrait) and (pointer: coarse) { #girar { display: block; } }
 #jugador input:focus-visible, #jugador button:focus-visible { outline: 2px dashed var(--fg); outline-offset: 3px; }
 </style>
 <style>html,body{margin:0}</style>
 </head>
 <body>
+<p id="girar"><span class="icono" aria-hidden="true">&#10227;</span>GIRA EL MOVIL PARA JUGAR EN GRANDE
+<small id="girar-ios" hidden>En iPhone: Compartir &rarr; Añadir a pantalla de inicio para jugar sin barras</small></p>
 <canvas id="c" width="960" height="720" tabindex="0" aria-label="Juego Ladrillos"></canvas>
 
 <form id="jugador">
@@ -62,8 +76,8 @@ body {
 </form>
 <p class="ayuda" id="aviso" hidden></p>
 
-<p class="ayuda" id="ayuda">Raton, dedo o &larr; &rarr; para mover &middot; Clic o espacio para sacar &middot; P pausa &middot; F pantalla completa<br>
-<b>&#9664;&#9632;&#9654;</b> barra larga &middot; <b>&#9654;&#9633;&#9664;</b> barra corta &middot; <b>&#9679;&#9679;</b> bola doble<br>Tu nombre y tu puntuacion se muestran en el ranking publico.</p>
+<p class="ayuda" id="ayuda">Ratón, dedo o &larr; &rarr; para mover &middot; Clic o espacio para sacar &middot; P pausa &middot; F pantalla completa<br>
+<b>&#9664;&#9632;&#9654;</b> barra larga &middot; <b>&#9654;&#9633;&#9664;</b> barra corta &middot; <b>&#9679;&#9679;</b> bola doble<br>Tu nombre y tu puntuación se muestran en el ranking público.</p>
 
 <script>
 (() => {
@@ -259,10 +273,11 @@ function empezar() {
   const n = normNombre(campo.value).trim();
   const aviso = document.getElementById('aviso');
   if (!n) { campo.focus(); return; }
-  if (malsonante(n)) { aviso.textContent = 'Ese nombre no esta permitido. Elige otro.'; aviso.hidden = false; campo.focus(); return; }
+  if (malsonante(n)) { aviso.textContent = 'Ese nombre no está permitido. Elige otro.'; aviso.hidden = false; campo.focus(); return; }
   aviso.hidden = true;
   jugador = n; campo.value = n;
   try { localStorage.setItem('ladrillos-jugador', n); } catch (e) {}
+  completaEnMovil();
   nuevo(); cv.focus();
 }
 campo.addEventListener('input', () => { campo.value = normNombre(campo.value); });
@@ -271,12 +286,26 @@ form.addEventListener('submit', e => { e.preventDefault(); empezar(); });
 // Pantalla completa del navegador (en iPhone no existe: allí el botón no se muestra)
 const btnCompleta = document.getElementById('completa');
 if (!document.fullscreenEnabled) btnCompleta.hidden = true;
+function bloquearHorizontal() {
+  try { const r = screen.orientation && screen.orientation.lock && screen.orientation.lock('landscape'); if (r) r.catch(() => {}); } catch (e) {}
+}
 function pantallaCompleta() {
   try {
-    if (!document.fullscreenElement) { const r = document.documentElement.requestFullscreen(); if (r) r.catch(() => {}); }
-    else document.exitFullscreen();
+    if (!document.fullscreenElement) {
+      const r = document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+      if (r) r.then(bloquearHorizontal).catch(() => {});
+    } else document.exitFullscreen();
   } catch (e) {}
 }
+// En móvil, al pulsar JUGAR se intenta pantalla completa en horizontal (Android; iPhone no lo permite)
+const esTactil = matchMedia('(pointer: coarse)').matches;
+function completaEnMovil() {
+  if (esTactil && document.fullscreenEnabled && !document.fullscreenElement) pantallaCompleta();
+}
+// Aviso para iPhone fuera del modo app
+const esIOS = /iPhone|iPod/.test(navigator.userAgent);
+const enModoApp = navigator.standalone === true || matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches;
+if (esIOS && !enModoApp) document.getElementById('girar-ios').hidden = false;
 btnCompleta.addEventListener('click', pantallaCompleta);
 
 function finPartida() {
