@@ -11,8 +11,12 @@
 :root {
   --bg: #000; --fg: #fff; --dim: #d0d0d0;
   --pixel: "Press Start 2P", "Courier New", ui-monospace, monospace;
+  --reserva: 190px;   /* alto que dejan libre el formulario y la ayuda */
   color-scheme: dark;
 }
+/* Mientras se juega, solo el tablero: ocupa todo el alto */
+body.jugando { --reserva: 28px; }
+body.jugando #jugador, body.jugando #ayuda, body.jugando #aviso { display: none; }
 html, body { height: 100%; }
 body {
   background: var(--bg); color: var(--fg); font-family: var(--pixel);
@@ -23,7 +27,9 @@ body {
   user-select: none; -webkit-user-select: none;
 }
 #c {
-  width: min(100%, 760px, calc((100vh - 170px) * 4 / 3)); aspect-ratio: 4 / 3; max-width: 100%;
+  width: min(100%, calc((100vh - var(--reserva)) * 4 / 3));
+  width: min(100%, calc((100dvh - var(--reserva)) * 4 / 3));
+  aspect-ratio: 4 / 3; max-width: 100%;
   border: 2px solid var(--fg); touch-action: none; cursor: none; display: block;
 }
 #c:focus-visible { outline: 2px dashed var(--fg); outline-offset: 4px; }
@@ -40,6 +46,7 @@ body {
   font: 11px var(--pixel); background: var(--fg); color: var(--bg); border: 2px solid var(--fg);
   padding: 9px 12px; cursor: pointer; border-radius: 0;
 }
+#jugador button.sec { background: var(--bg); color: var(--fg); }
 #jugador input:focus-visible, #jugador button:focus-visible { outline: 2px dashed var(--fg); outline-offset: 3px; }
 </style>
 <style>html,body{margin:0}</style>
@@ -51,10 +58,11 @@ body {
   <label for="nombre">TU NOMBRE</label>
   <input id="nombre" maxlength="10" autocomplete="nickname" spellcheck="false" placeholder="NOMBRE">
   <button type="submit">JUGAR</button>
+  <button type="button" id="completa" class="sec">PANTALLA COMPLETA</button>
 </form>
 <p class="ayuda" id="aviso" hidden></p>
 
-<p class="ayuda" id="ayuda">Raton, dedo o &larr; &rarr; para mover &middot; Clic o espacio para sacar &middot; P pausa<br>
+<p class="ayuda" id="ayuda">Raton, dedo o &larr; &rarr; para mover &middot; Clic o espacio para sacar &middot; P pausa &middot; F pantalla completa<br>
 <b>&#9664;&#9632;&#9654;</b> barra larga &middot; <b>&#9654;&#9633;&#9664;</b> barra corta &middot; <b>&#9679;&#9679;</b> bola doble<br>Tu nombre y tu puntuacion se muestran en el ranking publico.</p>
 
 <script>
@@ -89,6 +97,7 @@ const ahora = () => performance.now() / 1000;
 
 function nuevo() {
   form.hidden = true;
+  document.body.classList.add('jugando');
   s = { modo: 'jugando', score: 0, lives: 3, n: 0, paused: false, keys: {}, px: (W - PW_NORMAL) / 2, msg: null, nuevoId: null };
   nivel();
 }
@@ -259,8 +268,20 @@ function empezar() {
 campo.addEventListener('input', () => { campo.value = normNombre(campo.value); });
 form.addEventListener('submit', e => { e.preventDefault(); empezar(); });
 
+// Pantalla completa del navegador (en iPhone no existe: allí el botón no se muestra)
+const btnCompleta = document.getElementById('completa');
+if (!document.fullscreenEnabled) btnCompleta.hidden = true;
+function pantallaCompleta() {
+  try {
+    if (!document.fullscreenElement) { const r = document.documentElement.requestFullscreen(); if (r) r.catch(() => {}); }
+    else document.exitFullscreen();
+  } catch (e) {}
+}
+btnCompleta.addEventListener('click', pantallaCompleta);
+
 function finPartida() {
   cargarRanking();
+  document.body.classList.remove('jugando');
   s.modo = 'fin'; s.stuck = true; s.caps = null;
   if (entraEnRanking(s.score)) guardar();
   form.hidden = false;
@@ -330,7 +351,16 @@ function pieInicio() {
   if (!normNombre(campo.value).trim()) txt('ESCRIBE TU NOMBRE ABAJO', W / 2, 222);
   else if (Math.floor(performance.now() / 450) % 2 === 0) txt('CLIC O ESPACIO PARA JUGAR', W / 2, 222);
 }
+// Resolución interna: múltiplo entero de 320x240 según el tamaño real en pantalla, para que se vea nítido
+function ajustarResolucion() {
+  const r = cv.getBoundingClientRect();
+  const esc = Math.max(1, Math.min(8, Math.ceil(r.width * (window.devicePixelRatio || 1) / W)));
+  if (cv.width !== W * esc) { cv.width = W * esc; cv.height = H * esc; }
+  g.setTransform(esc, 0, 0, esc, 0, 0);
+  g.imageSmoothingEnabled = false;
+}
 function dibujar() {
+  ajustarResolucion();
   g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
   g.fillStyle = '#fff';
 
@@ -408,6 +438,7 @@ addEventListener('keydown', e => {
   if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') { s.keys[e.code] = true; e.preventDefault(); }
   if (e.code === 'Space') { accion(); e.preventDefault(); }
   if (e.code === 'KeyP' && s.modo === 'jugando') s.paused = !s.paused;
+  if (e.code === 'KeyF') pantallaCompleta();
 });
 addEventListener('keyup', e => { if (s.keys) s.keys[e.code] = false; });
 addEventListener('blur', () => { s.keys = {}; });
