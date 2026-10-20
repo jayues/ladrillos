@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Ladrillos</title>
+<meta name="description" content="Juego de romper ladrillos en blanco y negro, con ranking.">
+<style>
+@font-face { font-family: "Press Start 2P"; src: url("fuentes/PressStart2P.woff") format("woff"); font-display: swap; }
+/* Pantalla única de PC antiguo: todo negro, todo blanco, letra de 8 bits */
+:root {
+  --bg: #000; --fg: #fff; --dim: #d0d0d0;
+  --pixel: "Press Start 2P", "Courier New", ui-monospace, monospace;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--pixel);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 12px; box-sizing: border-box; overflow: hidden;
+  user-select: none; -webkit-user-select: none;
+}
+#c {
+  width: min(100%, 760px, calc((100vh - 170px) * 4 / 3)); aspect-ratio: 4 / 3; max-width: 100%;
+  border: 2px solid var(--fg); touch-action: none; cursor: none; display: block;
+}
+#c:focus-visible { outline: 2px dashed var(--fg); outline-offset: 4px; }
+.ayuda { margin: 0; font-size: 10px; color: var(--dim); text-align: center; line-height: 2; max-width: 760px; }
+.ayuda b { color: var(--fg); font-weight: normal; }
+
+#jugador { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; font-size: 11px; }
+#jugador label { color: var(--fg); }
+#jugador input {
+  font: 14px var(--pixel); width: 12ch; max-width: 60vw; text-align: center; text-transform: uppercase;
+  background: var(--bg); color: var(--fg); border: 2px solid var(--fg); padding: 7px 4px; border-radius: 0;
+}
+#jugador button {
+  font: 11px var(--pixel); background: var(--fg); color: var(--bg); border: 2px solid var(--fg);
+  padding: 9px 12px; cursor: pointer; border-radius: 0;
+}
+#jugador input:focus-visible, #jugador button:focus-visible { outline: 2px dashed var(--fg); outline-offset: 3px; }
+</style>
+<style>html,body{margin:0}</style>
+</head>
+<body>
+<canvas id="c" width="960" height="720" tabindex="0" aria-label="Juego Ladrillos"></canvas>
+
+<form id="jugador">
+  <label for="nombre">TU NOMBRE</label>
+  <input id="nombre" maxlength="10" autocomplete="nickname" spellcheck="false" placeholder="NOMBRE">
+  <button type="submit">JUGAR</button>
+</form>
+<p class="ayuda" id="aviso" hidden></p>
+
+<p class="ayuda" id="ayuda">Raton, dedo o &larr; &rarr; para mover &middot; Clic o espacio para sacar &middot; P pausa<br>
+<b>&#9664;&#9632;&#9654;</b> barra larga &middot; <b>&#9654;&#9633;&#9664;</b> barra corta &middot; <b>&#9679;&#9679;</b> bola doble<br>Tu nombre y tu puntuacion se muestran en el ranking publico.</p>
+
+<script>
+(() => {
+const W = 320, H = 240, ESC = 3;
+const cv = document.getElementById('c'), g = cv.getContext('2d');
+g.setTransform(ESC, 0, 0, ESC, 0, 0);
+g.imageSmoothingEnabled = false;
+const FUENTE = '"Press Start 2P", "Courier New", monospace';
+
+// ---------- Niveles ----------
+// 1 = ladrillo normal · 2 = duro (dos golpes) · # = indestructible · . = vacío
+const NIVELES = [
+  { nombre: 'CLASICO', mapa: ['1111111111','1111111111','1111111111','1111111111','1111111111']},
+  { nombre: 'PIRAMIDE', mapa: ['....11....','...1111...','..111111..','.11111111.','1111111111','2222222222']},
+  { nombre: 'DAMERO', mapa: ['1.1.1.1.1.','.1.1.1.1.1','2.2.2.2.2.','.2.2.2.2.2','1.1.1.1.1.','.1.1.1.1.1']},
+  { nombre: 'CORAZON', mapa: ['.22....22.','2112..2112','2111111112','.21111112.','..211112..','...2112...','....22....']},
+  { nombre: 'MURALLA', mapa: ['2222222222','1111111111','1111111111','#.##..##.#','..........','1111111111']},
+  { nombre: 'COLUMNAS', mapa: ['2.2.22.2.2','1.1.11.1.1','1.1.11.1.1','1.1.11.1.1','1.1.11.1.1','#.#....#.#']},
+  { nombre: 'DIAMANTE', mapa: ['....22....','...2112...','..211112..','.21111112.','..211112..','...2112...','....22....']},
+  { nombre: 'FORTALEZA', mapa: ['2222222222','#11111111#','#12222221#','#12....21#','#12222221#','#11111111#','###....###']},
+];
+
+const BW = 28, BH = 8, GAP = 2, TOP = 22, LEFT = 10;
+const PH = 4, PY = 220, BALL = 3, PW_NORMAL = 40, PW_LARGA = 60, PW_CORTA = 26;
+const PASOS = 120, PROB_CAPSULA = 0.09, DURACION = 15, MAX_BOLAS = 3;
+const CW = 24, CH = 9;   // tamaño de la cápsula
+const MENSAJES = { larga: 'BARRA LARGA', corta: 'BARRA CORTA', doble: 'BOLA DOBLE' };
+
+let s = { modo: 'inicio', score: 0, lives: 3, n: 0, keys: {}, px: (W - PW_NORMAL) / 2, pw: PW_NORMAL, balls: [], bricks: [] };
+const ahora = () => performance.now() / 1000;
+
+function nuevo() {
+  form.hidden = true;
+  s = { modo: 'jugando', score: 0, lives: 3, n: 0, paused: false, keys: {}, px: (W - PW_NORMAL) / 2, msg: null, nuevoId: null };
+  nivel();
+}
+const vuelta = () => Math.floor(s.n / NIVELES.length);
+const velBase = () => Math.min(2.4, 1.25 + (s.n % NIVELES.length) * 0.07 + vuelta() * 0.3);
+
+function nivel() {
+  const def = NIVELES[s.n % NIVELES.length];
+  s.bricks = [];
+  def.mapa.forEach((fila, r) => [...fila].forEach((ch, c) => {
+    if (ch === '.') return;
+    const tipo = ch === '#' ? 'fijo' : ch === '2' ? 'duro' : 'normal';
+    s.bricks.push({ x: LEFT + c * (BW + GAP), y: TOP + r * (BH + GAP), tipo,
+      hp: tipo === 'fijo' ? Infinity : tipo === 'duro' ? 2 : 1, pts: tipo === 'duro' ? 50 : 20 });
+  }));
+  s.nombre = def.nombre;
+  reiniciarVida();
+}
+function reiniciarVida() {
+  s.pw = PW_NORMAL; s.efecto = null; s.efectoHasta = 0; s.caps = null;
+  s.px = Math.max(0, Math.min(W - s.pw, s.px));
+  s.balls = [{ x: 0, y: 0, vx: 0, vy: 0 }];
+  s.stuck = true; colocarPegada();
+}
+function colocarPegada() { const b = s.balls[0]; b.x = s.px + s.pw / 2 - 1; b.y = PY - BALL - 1; }
+
+function accion() {
+  if (s.modo === 'inicio' || s.modo === 'fin') { empezar(); return; }
+  if (!s.stuck || s.paused) return;
+  const v = velBase(), b = s.balls[0];
+  s.stuck = false; b.vx = v * 0.55; b.vy = -v * 0.83;
+}
+
+const choca = (b, k) => b.x < k.x + BW && b.x + BALL > k.x && b.y < k.y + BH && b.y + BALL > k.y;
+
+function moverBola(b) {
+  b.x += b.vx;
+  if (b.x < 0) { b.x = 0; b.vx = Math.abs(b.vx); }
+  if (b.x + BALL > W) { b.x = W - BALL; b.vx = -Math.abs(b.vx); }
+  for (const k of s.bricks) if (k.hp > 0 && choca(b, k)) { b.x -= b.vx; b.vx = -b.vx; golpe(k, b); break; }
+  b.y += b.vy;
+  if (b.y < 12) { b.y = 12; b.vy = Math.abs(b.vy); }
+  for (const k of s.bricks) if (k.hp > 0 && choca(b, k)) { b.y -= b.vy; b.vy = -b.vy; golpe(k, b); break; }
+  if (b.vy > 0 && b.y + BALL >= PY && b.y + BALL <= PY + PH + 3 && b.x + BALL > s.px && b.x < s.px + s.pw) {
+    const rel = ((b.x + BALL / 2) - (s.px + s.pw / 2)) / (s.pw / 2);
+    const v = Math.hypot(b.vx, b.vy), ang = Math.max(-1, Math.min(1, rel));
+    b.vx = v * Math.sin(ang); b.vy = -v * Math.cos(ang); b.y = PY - BALL;
+    if (Math.abs(b.vy) < v * 0.35) b.vy = -v * 0.35;
+  }
+}
+
+function golpe(k, b) {
+  if (k.tipo === 'fijo') return;
+  k.hp--;
+  if (k.hp === 0) {
+    s.score += k.pts;
+    if (!s.caps && Math.random() < PROB_CAPSULA) {
+      const tipos = ['larga', 'corta', 'doble'];
+      s.caps = { x: k.x + BW / 2 - CW / 2, y: k.y, tipo: tipos[Math.floor(Math.random() * 3)] };
+    }
+  }
+  const v = Math.hypot(b.vx, b.vy);
+  if (v < velBase() * 1.45) { b.vx *= 1.006; b.vy *= 1.006; }
+  if (s.bricks.every(x => x.tipo === 'fijo' || x.hp <= 0)) { s.n++; nivel(); }
+}
+
+function aplicar(tipo) {
+  s.msg = { t: MENSAJES[tipo], hasta: ahora() + 1.6 };
+  if (tipo === 'doble') {
+    const nuevas = [];
+    for (const b of s.balls) {
+      if (s.balls.length + nuevas.length >= MAX_BOLAS) break;
+      nuevas.push({ x: b.x, y: b.y, vx: -b.vx || 1, vy: b.vy });
+    }
+    s.balls.push(...nuevas);
+    return;
+  }
+  const centro = s.px + s.pw / 2;
+  s.pw = tipo === 'larga' ? PW_LARGA : PW_CORTA;
+  s.efecto = tipo; s.efectoHasta = ahora() + DURACION;
+  s.px = Math.max(0, Math.min(W - s.pw, centro - s.pw / 2));
+}
+
+function paso() {
+  if (s.keys.ArrowLeft) s.px -= 3;
+  if (s.keys.ArrowRight) s.px += 3;
+  s.px = Math.max(0, Math.min(W - s.pw, s.px));
+  if (s.efecto && ahora() > s.efectoHasta) {
+    const centro = s.px + s.pw / 2;
+    s.pw = PW_NORMAL; s.efecto = null;
+    s.px = Math.max(0, Math.min(W - s.pw, centro - s.pw / 2));
+  }
+  if (s.stuck) { colocarPegada(); return; }
+
+  for (const b of [...s.balls]) { if (s.stuck) return; moverBola(b); }
+  if (s.stuck) return;
+  s.balls = s.balls.filter(b => b.y <= H);
+
+  if (s.caps) {
+    s.caps.y += 0.6;
+    const c = s.caps;
+    if (c.y + CH >= PY && c.y <= PY + PH && c.x + CW > s.px && c.x < s.px + s.pw) { aplicar(c.tipo); s.caps = null; }
+    else if (c.y > H) s.caps = null;
+  }
+  if (s.balls.length === 0) {
+    s.lives--;
+    if (s.lives <= 0) finPartida(); else reiniciarVida();
+  }
+}
+
+// ---------- Récords ----------
+// Compartidos con quien abra el juego (si el visor lo permite) y siempre copia en este navegador.
+let apiOk = false, compartidos = [], locales = [];
+try { locales = JSON.parse(localStorage.getItem('ladrillos-records') || localStorage.getItem('arkanoid-records') || '[]'); } catch (e) { locales = []; }
+const normNombre = v => String(v || '').toUpperCase().replace(/[^A-Z0-9ÑÇ .\-]/g, '').replace(/\s+/g, ' ').replace(/^ /, '').slice(0, 10);
+const limpiar = r => ({ id: String(r.id || ''), nombre: normNombre(r.nombre).trim() || '???',
+  score: Math.max(0, Math.floor(Number(r.score) || 0)), nivel: Math.max(1, Math.floor(Number(r.nivel) || 1)),
+  fecha: isNaN(Date.parse(r.fecha)) ? '' : String(r.fecha) });
+function fechaCorta(iso) {
+  const d = new Date(iso);
+  if (!iso || isNaN(d)) return '--/--/--';
+  const dd = n => String(n).padStart(2, '0');
+  return dd(d.getDate()) + '/' + dd(d.getMonth() + 1) + '/' + dd(d.getFullYear() % 100);
+}
+function ranking() {
+  const porId = new Map();
+  for (const r of (apiOk ? compartidos : locales)) { const x = limpiar(r); if (x.id && !porId.has(x.id)) porId.set(x.id, x); }
+  return [...porId.values()].sort((a, b) => b.score - a.score).slice(0, 10);
+}
+const entraEnRanking = p => p > 0 && (ranking().length < 10 || p > ranking()[9].score);
+
+async function cargarRanking() {
+  try {
+    const r = await fetch('/api/records', { cache: 'no-store' });
+    if (!r.ok) throw new Error(r.status);
+    const datos = await r.json();
+    compartidos = Array.isArray(datos) ? datos : []; apiOk = true;
+  } catch (e) { apiOk = false; }
+}
+cargarRanking();
+
+// Mismo filtro que el servidor (functions/_filtro.js): se avisa antes de jugar.
+const PROHIBIDAS = ['PUTA','PUTO','MIERDA','POLLA','JODER','JODID','CABRON','MARICON','GILIPOLL','SUBNORMAL','ZORRA',
+  'NAZI','HITLER','FOLLA','RETRASAD','MAMON','PAJILLER','GUARRA','CHOCHO','VERGA','FUCK','SHIT','BITCH','CUNT','NIGG','NEGRAT','SUDACA'];
+function malsonante(nombre) {
+  const t = String(nombre).toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/0/g, 'O').replace(/1/g, 'I').replace(/3/g, 'E').replace(/4/g, 'A').replace(/5/g, 'S').replace(/[^A-Z]/g, '');
+  return PROHIBIDAS.some(p => t.includes(p));
+}
+
+// ---------- Jugador ----------
+// El nombre se pide antes de jugar y se recuerda en este navegador.
+const form = document.getElementById('jugador'), campo = document.getElementById('nombre');
+let jugador = '';
+try { jugador = normNombre(localStorage.getItem('ladrillos-jugador') || localStorage.getItem('arkanoid-jugador')).trim(); } catch (e) {}
+campo.value = jugador;
+
+function empezar() {
+  const n = normNombre(campo.value).trim();
+  const aviso = document.getElementById('aviso');
+  if (!n) { campo.focus(); return; }
+  if (malsonante(n)) { aviso.textContent = 'Ese nombre no esta permitido. Elige otro.'; aviso.hidden = false; campo.focus(); return; }
+  aviso.hidden = true;
+  jugador = n; campo.value = n;
+  try { localStorage.setItem('ladrillos-jugador', n); } catch (e) {}
+  nuevo(); cv.focus();
+}
+campo.addEventListener('input', () => { campo.value = normNombre(campo.value); });
+form.addEventListener('submit', e => { e.preventDefault(); empezar(); });
+
+function finPartida() {
+  cargarRanking();
+  s.modo = 'fin'; s.stuck = true; s.caps = null;
+  if (entraEnRanking(s.score)) guardar();
+  form.hidden = false;
+}
+async function guardar() {
+  const partida = { nombre: jugador, score: s.score, nivel: s.n + 1 };
+  if (apiOk) {
+    try {
+      const r = await fetch('/api/records', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(partida) });
+      if (r.ok) { const d = await r.json(); compartidos = d.top || compartidos; s.nuevoId = d.id; return; }
+    } catch (e) {}
+  }
+  // Sin servidor (por ejemplo, abriendo el fichero en local): se guarda solo en este navegador.
+  const reg = limpiar({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), ...partida, fecha: new Date().toISOString() });
+  s.nuevoId = reg.id;
+  locales = [...locales, reg].sort((a, b) => b.score - a.score).slice(0, 10);
+  try { localStorage.setItem('ladrillos-records', JSON.stringify(locales)); } catch (e) {}
+}
+
+// ---------- Dibujo ----------
+function txt(t, x, y, size = 8, align = 'center') {
+  g.font = `${size}px ${FUENTE}`; g.textAlign = align; g.textBaseline = 'top';
+  g.fillText(t, x, y);
+}
+function marco(x, y, w, h) { g.fillRect(x, y, w, 1); g.fillRect(x, y + h - 1, w, 1); g.fillRect(x, y, 1, h); g.fillRect(x + w - 1, y, 1, h); }
+function triangulo(x, y, dir) {          // flecha de 5 px de alto; dir 1 = derecha, -1 = izquierda
+  for (let i = 0; i < 3; i++) g.fillRect(dir > 0 ? x + i : x - i, y + i, 1, 5 - i * 2);
+}
+function capsula(x, y, tipo) {
+  x = Math.round(x); y = Math.round(y);
+  if (tipo === 'larga') {                // rellena con flechas hacia fuera  ◄■►
+    g.fillStyle = '#fff'; g.fillRect(x + 1, y, CW - 2, CH); g.fillRect(x, y + 1, CW, CH - 2);
+    g.fillStyle = '#000'; triangulo(x + 6, y + 2, -1); triangulo(x + CW - 7, y + 2, 1); g.fillRect(x + 8, y + 4, CW - 16, 1);
+  } else if (tipo === 'corta') {         // hueca con flechas hacia dentro  ►□◄
+    g.fillStyle = '#000'; g.fillRect(x, y, CW, CH);
+    g.fillStyle = '#fff'; marco(x, y, CW, CH);
+    triangulo(x + 4, y + 2, 1); triangulo(x + CW - 5, y + 2, -1); g.fillRect(x + 10, y + 3, 4, 3);
+  } else {                               // dos bolas  ●●
+    g.fillStyle = '#000'; g.fillRect(x, y, CW, CH);
+    g.fillStyle = '#fff'; marco(x, y, CW, CH); g.fillRect(x + 6, y + 3, 4, 3); g.fillRect(x + 14, y + 3, 4, 3);
+  }
+  g.fillStyle = '#fff';
+}
+function cartel(t, y, size = 16) {        // texto con banda negra detrás para que se lea sobre los ladrillos
+  g.font = `${size}px ${FUENTE}`;
+  const w = g.measureText(t).width + 12;
+  g.fillStyle = '#000'; g.fillRect(Math.round(W / 2 - w / 2), y - 4, Math.round(w), size + 8);
+  g.fillStyle = '#fff'; txt(t, W / 2, y, size);
+}
+function tablaRecords(y0) {
+  txt('MEJORES PUNTUACIONES', W / 2, y0);
+  const r = ranking();
+  if (!r.length) { txt('TODAVIA NO HAY RECORDS', W / 2, y0 + 24); return; }
+  // Columnas de ancho fijo (31 caracteres): puesto, nombre, puntos, fecha
+  g.fillStyle = '#9a9a9a';
+  txt('    ' + 'NOMBRE'.padEnd(10) + ' ' + 'PUNTOS' + '  ' + 'FECHA'.padEnd(8), W / 2, y0 + 16);
+  g.fillStyle = '#fff';
+  const parpadeo = Math.floor(performance.now() / 300) % 2 === 0;
+  r.forEach((e, i) => {
+    if (e.id === s.nuevoId && !parpadeo) return;
+    const linea = String(i + 1).padStart(2, ' ') + '. ' + e.nombre.padEnd(10, ' ') + ' ' + String(e.score).padStart(6, ' ') + '  ' + fechaCorta(e.fecha);
+    txt(linea, W / 2, y0 + 30 + i * 13);
+  });
+}
+
+function pieInicio() {
+  if (!normNombre(campo.value).trim()) txt('ESCRIBE TU NOMBRE ABAJO', W / 2, 222);
+  else if (Math.floor(performance.now() / 450) % 2 === 0) txt('CLIC O ESPACIO PARA JUGAR', W / 2, 222);
+}
+function dibujar() {
+  g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#fff';
+
+  if (s.modo === 'inicio') {
+    txt('LADRILLOS', W / 2, 18, 24);
+    tablaRecords(52);
+    pieInicio();
+    return;
+  }
+  if (s.modo === 'fin') {
+    txt('FIN DE LA PARTIDA', W / 2, 10, 16);
+    txt(s.nuevoId ? 'NUEVO RECORD: ' + s.score + ' PUNTOS' : 'PUNTOS ' + s.score + '  -  NIVEL ' + (s.n + 1), W / 2, 32);
+    tablaRecords(52);
+    pieInicio();
+    return;
+  }
+
+  txt('PUNTOS ' + String(s.score).padStart(5, '0'), 3, 2, 8, 'left');
+  txt('NIVEL ' + (s.n + 1), W / 2 + 18, 2);
+  txt('VIDAS', W - 30, 2, 8, 'right');
+  for (let i = 0; i < s.lives; i++) g.fillRect(W - 26 + i * 8, 2, 6, 6);
+  g.fillRect(0, 11, W, 1);
+
+  for (const k of s.bricks) {
+    if (k.hp <= 0) continue;
+    if (k.tipo === 'fijo') {
+      marco(k.x, k.y, BW, BH);
+      for (let i = 2; i < BW - 1; i += 3) g.fillRect(k.x + i, k.y + 2 + (i % 2) * 2, 1, 2);
+    } else if (k.hp === 2) { marco(k.x, k.y, BW, BH); marco(k.x + 1, k.y + 1, BW - 2, BH - 2); }
+    else g.fillRect(k.x, k.y, BW, BH);
+  }
+
+  const resta = s.efectoHasta - ahora();
+  if (!(s.efecto && resta < 3 && Math.floor(resta * 6) % 2 === 0)) g.fillRect(Math.round(s.px), PY, s.pw, PH);
+  for (const b of s.balls) g.fillRect(Math.round(b.x), Math.round(b.y), BALL, BALL);
+  if (s.caps) capsula(s.caps.x, s.caps.y, s.caps.tipo);
+
+  // Efecto activo, abajo a la izquierda
+  if (s.efecto) txt(MENSAJES[s.efecto] + ' ' + Math.max(0, Math.ceil(resta)), 3, 230, 8, 'left');
+  if (s.balls.length > 1) txt('BOLAS ' + s.balls.length, W - 3, 230, 8, 'right');
+
+  if (s.msg && ahora() < s.msg.hasta) cartel(s.msg.t, 112);
+  if (s.paused) cartel('PAUSA', 140);
+  else if (s.stuck) {
+    const v = vuelta();
+    cartel('NIVEL ' + (s.n + 1) + ' - ' + s.nombre + (v ? ' - VUELTA ' + (v + 1) : ''), 150, 8);
+    if (Math.floor(performance.now() / 450) % 2 === 0) cartel('CLIC O ESPACIO PARA SACAR', 170, 8);
+  }
+}
+
+// ---------- Bucle ----------
+let last = performance.now(), acc = 0;
+function loop(t) {
+  acc += Math.min(100, t - last); last = t;
+  while (acc >= 1000 / PASOS) {
+    if (s.modo === 'jugando') {
+      if (!s.paused) paso();
+      else { if (s.efecto) s.efectoHasta += 1 / PASOS; if (s.msg) s.msg.hasta += 1 / PASOS; }
+    }
+    acc -= 1000 / PASOS;
+  }
+  dibujar();
+  requestAnimationFrame(loop);
+}
+
+// ---------- Controles ----------
+function aX(clientX) { const r = cv.getBoundingClientRect(); return (clientX - r.left) / r.width * W; }
+const seguir = e => { if (s.modo === 'jugando' && !s.paused) s.px = Math.max(0, Math.min(W - s.pw, aX(e.clientX) - s.pw / 2)); };
+cv.addEventListener('pointermove', seguir);
+cv.addEventListener('pointerdown', e => {
+  cv.focus(); seguir(e); accion();
+});
+addEventListener('keydown', e => {
+  if (e.target.closest && e.target.closest('#jugador')) return;
+  if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') { s.keys[e.code] = true; e.preventDefault(); }
+  if (e.code === 'Space') { accion(); e.preventDefault(); }
+  if (e.code === 'KeyP' && s.modo === 'jugando') s.paused = !s.paused;
+});
+addEventListener('keyup', e => { if (s.keys) s.keys[e.code] = false; });
+addEventListener('blur', () => { s.keys = {}; });
+
+if (!jugador) setTimeout(() => campo.focus(), 100);
+requestAnimationFrame(loop);
+})();
+</script>
+
+</body>
+</html>
