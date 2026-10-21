@@ -23,7 +23,7 @@
   color-scheme: dark;
 }
 /* Mientras se juega, solo el tablero: ocupa todo el alto */
-body.jugando { --reserva: 28px; }
+body.jugando { --reserva: 28px; touch-action: none; }   /* mientras se juega, el dedo no mueve la página */
 body.jugando #jugador, body.jugando #ayuda, body.jugando #aviso { display: none; }
 html, body { height: 100%; }
 body {
@@ -76,7 +76,7 @@ body {
 </form>
 <p class="ayuda" id="aviso" hidden></p>
 
-<p class="ayuda" id="ayuda">Ratón, dedo o &larr; &rarr; para mover &middot; Clic o espacio para sacar &middot; P pausa &middot; F pantalla completa<br>
+<p class="ayuda" id="ayuda">Ratón o &larr; &rarr; para mover &middot; En el móvil, desliza el dedo en cualquier sitio, también fuera del tablero &middot; Clic, toque o espacio para sacar &middot; P pausa &middot; F pantalla completa<br>
 <b>&#9664;&#9632;&#9654;</b> barra larga &middot; <b>&#9654;&#9633;&#9664;</b> barra corta &middot; <b>&#9679;&#9679;</b> bola doble<br>Tu nombre y tu puntuación se muestran en el ranking público.</p>
 
 <script>
@@ -476,11 +476,33 @@ function loop(t) {
 
 // ---------- Controles ----------
 function aX(clientX) { const r = cv.getBoundingClientRect(); return (clientX - r.left) / r.width * W; }
-const seguir = e => { if (s.modo === 'jugando' && !s.paused) s.px = Math.max(0, Math.min(W - s.pw, aX(e.clientX) - s.pw / 2)); };
+// Ratón: la barra sigue al puntero
+const seguir = e => { if (e.pointerType !== 'touch' && s.modo === 'jugando' && !s.paused) s.px = Math.max(0, Math.min(W - s.pw, aX(e.clientX) - s.pw / 2)); };
 cv.addEventListener('pointermove', seguir);
 cv.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'touch' && s.modo === 'jugando') return;   // en juego, el dedo lo gestiona el control táctil
   cv.focus(); seguir(e); accion();
 });
+// Móvil: control tipo panel táctil. El dedo puede ir en cualquier sitio, también fuera del tablero,
+// y la barra se mueve lo que deslizas (algo más, para no recorrer toda la pantalla), sin saltar a donde está el dedo.
+const SENSIBILIDAD = 1.6;
+let toque = null;
+const empiezaToque = (e, valor) => { toque = { id: e.pointerId, x0: e.clientX, y0: e.clientY, v0: valor }; };
+addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse' || s.modo !== 'jugando' || (e.target.closest && e.target.closest('#jugador, #modos'))) return;
+  alTocar(e);
+});
+addEventListener('pointermove', e => {
+  if (!toque || e.pointerId !== toque.id || s.paused) return;
+  const r = cv.getBoundingClientRect();
+  alDeslizar((e.clientX - toque.x0) * W / r.width * SENSIBILIDAD, (e.clientY - toque.y0) * H / r.height * SENSIBILIDAD);
+});
+const finToque = e => { if (toque && e.pointerId === toque.id) { toque = null; alSoltar(); } };
+addEventListener('pointerup', finToque);
+addEventListener('pointercancel', finToque);
+function alTocar(e) { empiezaToque(e, s.px); if (s.stuck) accion(); }   // tocar en cualquier sitio también saca
+function alDeslizar(dx) { s.px = Math.max(0, Math.min(W - s.pw, toque.v0 + dx)); }
+function alSoltar() {}
 addEventListener('keydown', e => {
   if (e.target.closest && e.target.closest('#jugador')) return;
   if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') { s.keys[e.code] = true; e.preventDefault(); }
